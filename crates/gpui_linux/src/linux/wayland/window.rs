@@ -952,9 +952,14 @@ impl WaylandWindowStatePtr {
             );
 
             let request_frame_callback = !state.acknowledged_first_configure;
+            state.acknowledged_first_configure = true;
+
+            // Refresh the opaque/blur region for the geometry this configure just settled,
+            // since resizing (including the resize triggered by a decoration mode switch)
+            // otherwise leaves it stale until some unrelated setter happens to run.
+            update_window(state);
+
             if request_frame_callback {
-                state.acknowledged_first_configure = true;
-                drop(state);
                 self.frame();
             }
         }
@@ -1966,8 +1971,15 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
     state.renderer.update_transparency(!opaque);
-    let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
-    opaque_area.inset(f32::from(state.inset()) as i32);
+    // Use the live surface size (not `window_bounds`, which intentionally keeps the
+    // pre-maximize/fullscreen size for restoring later) so the region always matches what's
+    // actually on screen.
+    let opaque_area = Bounds {
+        origin: Point::default(),
+        size: state.bounds.size,
+    }
+    .map(|v| f32::from(v) as i32)
+    .inset(f32::from(state.inset()) as i32);
 
     let region = state
         .globals
