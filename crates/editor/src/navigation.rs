@@ -1153,16 +1153,36 @@ impl Editor {
 
         self.dismiss_definition_peek(cx);
 
+        // The excerpt for each buffer covers the entire file (rather than just
+        // a few lines of context around the definition), so the peek can be
+        // scrolled to see the whole file; the initial scroll position/selection
+        // below jumps straight to the definition itself.
+        let mut target_ranges = Vec::<Range<Anchor>>::new();
         let excerpt_buffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
             for (buffer, ranges) in locations {
-                multibuffer.set_excerpts_for_path(
-                    PathKey::for_buffer(&buffer, cx),
+                let buffer_snapshot = buffer.read(cx).snapshot();
+                let primary = ranges
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| Point::zero()..Point::zero());
+                let path_key = PathKey::for_buffer(&buffer, cx);
+                multibuffer.set_excerpt_ranges_for_path(
+                    path_key,
                     buffer,
-                    ranges,
-                    multi_buffer::excerpt_context_lines(cx),
+                    &buffer_snapshot,
+                    vec![ExcerptRange {
+                        context: Point::zero()..buffer_snapshot.max_point(),
+                        primary,
+                    }],
                     cx,
                 );
+
+                let snapshot = multibuffer.snapshot(cx);
+                target_ranges.extend(ranges.into_iter().filter_map(|range| {
+                    let text_range = buffer_snapshot.anchor_range_inside(range);
+                    snapshot.anchor_range_in_buffer(text_range)
+                }));
             }
             multibuffer
         });
@@ -1176,6 +1196,17 @@ impl Editor {
             editor.set_read_only(true);
             editor
         });
+
+        if let Some(target_range) = target_ranges.first().cloned() {
+            peek_editor.update(cx, |editor, cx| {
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::center()),
+                    window,
+                    cx,
+                    |s| s.select_anchor_ranges([target_range]),
+                );
+            });
+        }
 
         let editor_handle = cx.entity().downgrade();
         let block = BlockProperties {
