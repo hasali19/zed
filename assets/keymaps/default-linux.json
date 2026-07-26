@@ -571,6 +571,7 @@
       "alt-ctrl-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-k ctrl-h": "call_hierarchy::ShowIncomingCalls",
+      "ctrl-shift-f12": "editor::PeekDefinition",
       "ctrl-m": "editor::MoveToEnclosingBracket", // from jetbrains
       "ctrl-|": "editor::MoveToEnclosingBracket",
       "ctrl-{": "editor::Fold",

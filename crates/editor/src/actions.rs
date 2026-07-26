@@ -628,6 +628,9 @@ actions!(
         GoToNextDocumentHighlight,
         /// Goes to the previous document highlight.
         GoToPreviousDocumentHighlight,
+        /// Shows the definition of the symbol at cursor inline, below the
+        /// current line, without navigating away from the current location.
+        PeekDefinition,
         /// Scrolls down by half a page.
         HalfPageDown,
         /// Scrolls up by half a page.

@@ -1162,6 +1162,10 @@ pub struct Editor {
     /// Active diff review overlays. Multiple overlays can be open simultaneously
     /// when hunks have comments stored.
     pub(crate) diff_review_overlays: Vec<DiffReviewOverlay>,
+    /// Block id of the active inline "peek definition" overlay, if one is
+    /// open. Only one can be open at a time; triggering a new peek replaces
+    /// the old one.
+    pub(crate) peek_definition_overlay: Option<CustomBlockId>,
     /// Stored review comments grouped by hunk.
     /// Uses a Vec instead of HashMap because DiffHunkKey contains an Anchor
     /// which doesn't implement Hash/Eq in a way suitable for HashMap keys.
@@ -2522,6 +2526,7 @@ impl Editor {
             gutter_diff_review_indicator: (None, None),
             diff_review_drag_state: None,
             diff_review_overlays: Vec::new(),
+            peek_definition_overlay: None,
             stored_review_comments: Vec::new(),
             next_review_comment_id: 0,
             hovered_diff_hunk_row: None,
@@ -3577,6 +3582,10 @@ impl Editor {
         }
         if !self.diff_review_overlays.is_empty() {
             self.dismiss_all_diff_review_overlays(cx);
+            dismissed = true;
+        }
+        if self.peek_definition_overlay.is_some() {
+            self.dismiss_definition_peek(cx);
             dismissed = true;
         }
 

@@ -566,6 +566,11 @@ impl EditorElement {
                 .go_to_type_definition_split(action, window, cx)
                 .detach_and_log_err(cx);
         });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .peek_definition(action, window, cx)
+                .detach_and_log_err(cx);
+        });
         register_action(editor, window, Editor::open_url);
         register_action(editor, window, Editor::open_selected_filename);
         register_action(editor, window, Editor::fold);

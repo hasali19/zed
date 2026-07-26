@@ -37,6 +37,10 @@ Results appear in a [multibuffer](./multibuffers.md), letting you edit matches i
 
 Jump to where a symbol is defined with {#kb editor::GoToDefinition} (or `Cmd+Click` / `Ctrl+Click`). If there are multiple definitions, they open in a multibuffer.
 
+## Peek Definition
+
+See a symbol's definition inline with {#kb editor::PeekDefinition}, without leaving your current location. The definition opens in a small, read-only, scrollable panel below the current line. Press `Escape` or click the close button to dismiss it.
+
 ## Go to Symbol
 
 - **Current file:** {#kb outline::Toggle} opens an outline of symbols in the active file
@@ -72,6 +76,7 @@ Quickly switch between open tabs with {#kb tab_switcher::Toggle}. Tabs are sorte
 | Project search     | {#kb pane::DeploySearch}             |
 | Text search picker | {#kb project_search::OpenTextFinder} |
 | Go to definition   | {#kb editor::GoToDefinition}         |
+| Peek definition    | {#kb editor::PeekDefinition}         |
 | Find references    | {#kb editor::FindAllReferences}      |
 | Symbol in file     | {#kb outline::Toggle}                |
 | Symbol in project  | {#kb project_symbols::Toggle}        |

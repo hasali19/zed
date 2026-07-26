@@ -1063,6 +1063,209 @@ impl Editor {
         })
     }
 
+    pub fn peek_definition(
+        &mut self,
+        _: &PeekDefinition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Navigated>> {
+        self.peek_definition_of_kind(GotoDefinitionKind::Symbol, window, cx)
+    }
+
+    fn peek_definition_of_kind(
+        &mut self,
+        kind: GotoDefinitionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Navigated>> {
+        let Some(provider) = self.semantics_provider.clone() else {
+            return Task::ready(Ok(Navigated::No));
+        };
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let head_point = self
+            .selections
+            .newest::<Point>(&self.display_snapshot(cx))
+            .head();
+        let Some((source_buffer, source_head)) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(head_point, cx)
+        else {
+            return Task::ready(Ok(Navigated::No));
+        };
+        let Some(definitions) = provider.definitions(&source_buffer, source_head, kind, cx) else {
+            return Task::ready(Ok(Navigated::No));
+        };
+
+        let row = MultiBufferRow(head_point.row);
+        let anchor = snapshot.anchor_after(Point::new(row.0, snapshot.line_len(row)));
+
+        cx.spawn_in(window, async move |editor, cx| {
+            let Some(definitions) = definitions.await? else {
+                return Ok(Navigated::No);
+            };
+            let locations: std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>> = cx
+                .update(|_, cx| {
+                    definitions
+                        .into_iter()
+                        .filter(|location| {
+                            hover_links::exclude_link_to_position(
+                                &source_buffer,
+                                &source_head,
+                                location,
+                                cx,
+                            )
+                        })
+                        .map(|location| {
+                            let buffer = location.target.buffer.read(cx);
+                            (
+                                location.target.buffer,
+                                location.target.range.to_point(buffer),
+                            )
+                        })
+                        .into_group_map()
+                })?;
+
+            if locations.is_empty() {
+                return Ok(Navigated::No);
+            }
+
+            editor.update_in(cx, |editor, window, cx| {
+                editor.show_definition_peek(anchor, locations, window, cx);
+            })?;
+
+            Ok(Navigated::Yes)
+        })
+    }
+
+    /// Shows a read-only preview of `locations` inline, in a block placed
+    /// below `anchor`. Replaces any peek overlay that's already open.
+    fn show_definition_peek(
+        &mut self,
+        anchor: Anchor,
+        locations: std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        const MIN_PEEK_DEFINITION_LINES: u32 = 3;
+        const MAX_PEEK_DEFINITION_LINES: u32 = 20;
+        const PEEK_DEFINITION_HEADER_LINES: u32 = 2;
+
+        self.dismiss_definition_peek(cx);
+
+        let excerpt_buffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+            for (buffer, ranges) in locations {
+                multibuffer.set_excerpts_for_path(
+                    PathKey::for_buffer(&buffer, cx),
+                    buffer,
+                    ranges,
+                    multi_buffer::excerpt_context_lines(cx),
+                    cx,
+                );
+            }
+            multibuffer
+        });
+        let content_lines = excerpt_buffer.read(cx).snapshot(cx).max_row().0 + 1;
+        let height = (content_lines + PEEK_DEFINITION_HEADER_LINES)
+            .clamp(MIN_PEEK_DEFINITION_LINES, MAX_PEEK_DEFINITION_LINES);
+
+        let project = self.project.clone();
+        let peek_editor = cx.new(|cx| {
+            let mut editor = Editor::for_multibuffer(excerpt_buffer, project, window, cx);
+            editor.set_read_only(true);
+            editor
+        });
+
+        let editor_handle = cx.entity().downgrade();
+        let block = BlockProperties {
+            style: BlockStyle::Sticky,
+            placement: BlockPlacement::Below(anchor),
+            height: Some(height),
+            render: Arc::new(move |cx| {
+                Self::render_definition_peek(&peek_editor, &editor_handle, cx)
+            }),
+            priority: 0,
+        };
+
+        let block_ids = self.insert_blocks([block], None, cx);
+        let Some(block_id) = block_ids.into_iter().next() else {
+            log::error!("Failed to insert peek definition block");
+            return;
+        };
+
+        self.peek_definition_overlay = Some(block_id);
+
+        cx.notify();
+    }
+
+    pub(crate) fn dismiss_definition_peek(&mut self, cx: &mut Context<Self>) {
+        if let Some(block_id) = self.peek_definition_overlay.take() {
+            self.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+            cx.notify();
+        }
+    }
+
+    fn render_definition_peek(
+        peek_editor: &Entity<Editor>,
+        editor_handle: &WeakEntity<Editor>,
+        cx: &mut BlockContext,
+    ) -> AnyElement {
+        let colors = cx.theme().colors();
+        let total_height = cx.line_height * cx.height as f32;
+        let editor_handle = editor_handle.clone();
+
+        v_flex()
+            .w_full()
+            .h(total_height)
+            .bg(colors.editor_background)
+            .border_1()
+            .border_color(colors.border)
+            .rounded_md()
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .bg(colors.surface_background)
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Code)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("Peek Definition")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        IconButton::new("peek-definition-close", IconName::Close)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Close"))
+                            .on_click(move |_, _window, cx| {
+                                if let Some(editor) = editor_handle.upgrade() {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.dismiss_definition_peek(cx);
+                                    });
+                                }
+                            }),
+                    ),
+            )
+            .child(div().flex_1().min_h_0().child(peek_editor.clone()))
+            .into_any_element()
+    }
+
     pub fn go_to_declaration(
         &mut self,
         _: &GoToDeclaration,
