@@ -217,7 +217,7 @@ mod uniform_list {
             item_count: usize,
             window: &mut Window,
             cx: &mut App,
-        ) -> AnyElement {
+        ) -> (AnyElement, Option<Bounds<Pixels>>) {
             let includes_trailing_indent = visible_range.end < item_count;
             // Check if we have entries after the visible range,
             // if so extend the visible range so we can fetch a trailing indent,
@@ -234,7 +234,10 @@ mod uniform_list {
                 visible_range.start,
                 includes_trailing_indent,
             );
-            self.render_from_layout(indent_guides, bounds, item_height, window, cx)
+            (
+                self.render_from_layout(indent_guides, bounds, item_height, window, cx),
+                None,
+            )
         }
     }
 }

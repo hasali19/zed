@@ -72,6 +72,11 @@ pub struct UniformList {
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
     decorations: SmallVec<[AnyElement; 2]>,
+    /// The union of bounds fully occluded by decorations, if any. List items
+    /// are not painted within these bounds, to avoid visual bleed-through
+    /// underneath decorations with a semi-transparent background (e.g. sticky
+    /// items when window transparency is enabled).
+    occluded_bounds: Option<Bounds<Pixels>>,
 }
 
 /// A handle for controlling the scroll position of a uniform list.
@@ -324,6 +329,7 @@ impl Element for UniformList {
             UniformListFrameState {
                 items: SmallVec::new(),
                 decorations: SmallVec::new(),
+                occluded_bounds: None,
             },
         )
     }
@@ -513,7 +519,7 @@ impl Element for UniformList {
                         let bounds =
                             Bounds::new(padded_bounds.origin + scroll_offset, padded_bounds.size);
                         for decoration in &self.decorations {
-                            let mut decoration = decoration.as_ref().compute(
+                            let (mut decoration, occluded_bounds) = decoration.as_ref().compute(
                                 visible_range.clone(),
                                 bounds,
                                 scroll_offset,
@@ -522,6 +528,13 @@ impl Element for UniformList {
                                 window,
                                 cx,
                             );
+                            if let Some(occluded_bounds) = occluded_bounds {
+                                frame_state.occluded_bounds =
+                                    Some(match frame_state.occluded_bounds {
+                                        Some(existing) => existing.union(&occluded_bounds),
+                                        None => occluded_bounds,
+                                    });
+                            }
                             let available_space = size(
                                 AvailableSpace::Definite(bounds.size.width),
                                 AvailableSpace::Definite(bounds.size.height),
@@ -556,9 +569,26 @@ impl Element for UniformList {
             window,
             cx,
             |_, window, cx| {
-                for item in &mut request_layout.items {
-                    item.paint(window, cx);
-                }
+                // Avoid painting items underneath decoration-occluded bounds (e.g. sticky
+                // items), so that content doesn't bleed through when decorations have a
+                // semi-transparent background.
+                let below_occluded_mask =
+                    request_layout
+                        .occluded_bounds
+                        .map(|occluded_bounds| ContentMask {
+                            bounds: Bounds {
+                                origin: point(bounds.origin.x, occluded_bounds.bottom()),
+                                size: size(
+                                    bounds.size.width,
+                                    (bounds.bottom() - occluded_bounds.bottom()).max(Pixels::ZERO),
+                                ),
+                            },
+                        });
+                window.with_content_mask(below_occluded_mask, |window| {
+                    for item in &mut request_layout.items {
+                        item.paint(window, cx);
+                    }
+                });
                 for decoration in &mut request_layout.decorations {
                     decoration.paint(window, cx);
                 }
@@ -580,6 +610,12 @@ impl IntoElement for UniformList {
 pub trait UniformListDecoration {
     /// Compute the decoration element, given the visible range of list items,
     /// the bounds of the list, and the height of each item.
+    ///
+    /// Also returns the bounds (if any) that the decoration will fully occlude, so
+    /// that the list can avoid painting items underneath. This is important for
+    /// decorations with a semi-transparent background, such as sticky items shown
+    /// while window transparency is enabled, to prevent scrolled content from
+    /// bleeding through.
     fn compute(
         &self,
         visible_range: Range<usize>,
@@ -589,7 +625,7 @@ pub trait UniformListDecoration {
         item_count: usize,
         window: &mut Window,
         cx: &mut App,
-    ) -> AnyElement;
+    ) -> (AnyElement, Option<Bounds<Pixels>>);
 }
 
 impl<T: UniformListDecoration + 'static> UniformListDecoration for Entity<T> {
@@ -602,7 +638,7 @@ impl<T: UniformListDecoration + 'static> UniformListDecoration for Entity<T> {
         item_count: usize,
         window: &mut Window,
         cx: &mut App,
-    ) -> AnyElement {
+    ) -> (AnyElement, Option<Bounds<Pixels>>) {
         self.update(cx, |inner, cx| {
             inner.compute(
                 visible_range,

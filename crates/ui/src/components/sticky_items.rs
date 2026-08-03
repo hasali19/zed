@@ -145,17 +145,20 @@ where
         _item_count: usize,
         window: &mut Window,
         cx: &mut App,
-    ) -> AnyElement {
+    ) -> (AnyElement, Option<Bounds<Pixels>>) {
         let entries = (self.compute_fn)(visible_range.clone(), window, cx);
 
         let Some(sticky_anchor) = find_sticky_anchor(&entries, visible_range.start) else {
-            return StickyItemsElement {
-                drifting_element: None,
-                drifting_decoration: None,
-                rest_elements: SmallVec::new(),
-                rest_decorations: SmallVec::new(),
-            }
-            .into_any_element();
+            return (
+                StickyItemsElement {
+                    drifting_element: None,
+                    drifting_decoration: None,
+                    rest_elements: SmallVec::new(),
+                    rest_decorations: SmallVec::new(),
+                }
+                .into_any_element(),
+                None,
+            );
         };
 
         let anchor_depth = sticky_anchor.entry.depth();
@@ -248,16 +251,20 @@ where
 
         // order of prepaint is important here
         // mouse events checks hitboxes in reverse insertion order
-        if let Some(ref mut drifting_element) = drifting_element {
-            let sticky_origin = base_origin
-                + point(
-                    px(0.),
-                    item_height * rest_elements.len() + drifting_y_offset,
-                );
+        let rest_height = item_height * rest_elements.len();
+        let occluded_height = if let Some(ref mut drifting_element) = drifting_element {
+            let sticky_origin = base_origin + point(px(0.), rest_height + drifting_y_offset);
 
             drifting_element.layout_as_root(element_available_space, window, cx);
             drifting_element.prepaint_at(sticky_origin, window, cx);
-        }
+
+            // The rest of the stack is always fully opaque and occludes its own area
+            // regardless of the drifting item's position; only the drifting item's
+            // remaining visible sliver (if any) adds to the occluded area.
+            rest_height + (drifting_y_offset + item_height).max(Pixels::ZERO)
+        } else {
+            rest_height
+        };
 
         for (ix, element) in rest_elements.iter_mut().enumerate() {
             let sticky_origin = base_origin + point(px(0.), item_height * ix);
@@ -266,13 +273,18 @@ where
             element.prepaint_at(sticky_origin, window, cx);
         }
 
-        StickyItemsElement {
-            drifting_element,
-            drifting_decoration: last_decoration_element,
-            rest_elements,
-            rest_decorations: rest_decoration_elements,
-        }
-        .into_any_element()
+        let occluded_bounds = Bounds::new(base_origin, size(bounds.size.width, occluded_height));
+
+        (
+            StickyItemsElement {
+                drifting_element,
+                drifting_decoration: last_decoration_element,
+                rest_elements,
+                rest_decorations: rest_decoration_elements,
+            }
+            .into_any_element(),
+            Some(occluded_bounds),
+        )
     }
 }
 
